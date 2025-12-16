@@ -21,4 +21,4 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: build_deb/auto-battery-conservation_*.deb
+          files: auto-battery-conservation_*.deb
