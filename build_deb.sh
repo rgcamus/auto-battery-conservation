@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-VERSION="1.0"
+VERSION="1.0.1"
 ARCH="all"
 PKG_NAME="auto-battery-conservation"
 DEB_NAME="${PKG_NAME}_${VERSION}_${ARCH}.deb"

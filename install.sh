@@ -6,7 +6,7 @@ SERVICE_NAME="auto-battery-conservation.service"
 TIMER_NAME="auto-battery-conservation.timer"
 
 SRC_DIR=$(pwd)
-BIN_DIR="/usr/local/bin"
+BIN_DIR="/usr/sbin"
 SYSTEMD_DIR="/etc/systemd/system"
 
 # Ensure root
