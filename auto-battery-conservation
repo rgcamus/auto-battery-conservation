@@ -28,7 +28,7 @@ usage() {
   echo "Options:"
   echo "  -h, --help           Show this help message"
   echo "  -g, --get            Show current battery level and configured threshold"
-  echo "  -s, --set <percent>  Set desired conservation threshold (50-80)"
+  echo "  -s, --set <percent>  Set desired conservation threshold (50-80 default - 60 by default)"
   echo "  -f, --full           Force full charge (sets threshold to 100)"
   echo
   echo "Without arguments, the script runs in polling mode: it reads the configuration"
@@ -37,12 +37,14 @@ usage() {
 
 read_config() {
   if [[ -f "$CONFIG_FILE" ]]; then
-    # Load config as environment variables
-    # shellcheck source=/dev/null
-    if source "$CONFIG_FILE"; then
-      echo "${BATTERY_LEVEL_DESIRED:-$DEFAULT_DESIRED}"
+    # Securely parse config key avoiding arbitrary code execution from 'source'
+    local val
+    val=$(grep "^BATTERY_LEVEL_DESIRED=" "$CONFIG_FILE" | cut -d'=' -f2)
+
+    # Validate result is a number before using
+    if [[ "$val" =~ ^[0-9]+$ ]]; then
+      echo "$val"
     else
-      echo "Error: Failed to load config file $CONFIG_FILE" >&2
       echo "$DEFAULT_DESIRED"
     fi
   else
