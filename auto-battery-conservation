@@ -1,154 +1,235 @@
 #!/bin/bash
 
-# auto-battery-conservation - Turn battery conservation mode on or off depending
-# on the current battery level.
+# auto-battery-conservation - Manage battery conservation mode on Lenovo IdeaPad
+# laptops to prolong battery life by controlling charge thresholds.
 #
 # This work is licensed under the Creative Commons Zero v1.0 Universal and
 # therefore belongs to the public domain. For more information, please visit:
 #
 #     https://creativecommons.org/publicdomain/zero/1.0
 
+set -e
+
+VERSION="1.0.2"
 CONFIG_FILE="/etc/auto-battery-conservation.conf"
-DEFAULT_DESIRED=60
 BATTERY="BAT0"
 BATTERY_PATH="/sys/class/power_supply/$BATTERY"
-ACPI_PATH="/sys/bus/platform/drivers/ideapad_acpi/VPC2004*/conservation_mode"
+CONSERVATION_PATH="/sys/bus/platform/drivers/ideapad_acpi/VPC2004:00/conservation_mode"
 
-# Ensure the script has root privileges (prompt for sudo if needed)
-ensure_root() {
-  if [[ $EUID -ne 0 ]]; then
-    echo "Script requires root privileges for this operation. Prompting for sudo..." >&2
-    sudo -v || { echo "Failed to obtain sudo privileges." >&2; exit 1; }
-  fi
-}
+# Default threshold if config doesn't exist
+DEFAULT_THRESHOLD=60
 
-usage() {
-  echo "Usage: $(basename "$0") [OPTIONS]"
-  echo
-  echo "Options:"
-  echo "  -h, --help           Show this help message"
-  echo "  -g, --get            Show current battery level and configured threshold"
-  echo "  -s, --set <percent>  Set desired conservation threshold (50-80 default - 60 by default)"
-  echo "  -f, --full           Force full charge (sets threshold to 100)"
-  echo
-  echo "Without arguments, the script runs in polling mode: it reads the configuration"
-  echo "and enables/disables conservation mode based on current battery level."
-}
+# Logger tag
+LOG_TAG="auto-battery-conservation"
 
-read_config() {
-  if [[ -f "$CONFIG_FILE" ]]; then
-    # Securely parse config key avoiding arbitrary code execution from 'source'
-    local val
-    val=$(grep "^BATTERY_LEVEL_DESIRED=" "$CONFIG_FILE" | cut -d'=' -f2)
+# Function to display help
+show_help() {
+    cat << EOF
+Usage: auto-battery-conservation [OPTION]
 
-    # Validate result is a number before using
-    if [[ "$val" =~ ^[0-9]+$ ]]; then
-      echo "$val"
-    else
-      echo "$DEFAULT_DESIRED"
-    fi
-  else
-    echo "$DEFAULT_DESIRED"
-  fi
-}
+Manage battery conservation mode on Lenovo IdeaPad laptops.
 
-write_config() {
-  local val="$1"
-  ensure_root
-  cat <<EOF | sudo tee "$CONFIG_FILE" > /dev/null
-# Battery Conservation Configuration
-# BATTERY_LEVEL_DESIRED defines the charge threshold percentage (50-80).
-# When the battery reaches this level, conservation mode is enabled.
-BATTERY_LEVEL_DESIRED=$val
-EOF
-  echo "Configuration updated: threshold set to ${val}%"
-}
+Options:
+  --help              Show this help message
+  --version           Show version information
+  --get               Display current battery status and threshold
+  --set <threshold>   Set battery conservation threshold (50-80)
+                      Requires root privileges
+  --full              Disable conservation to allow full charge (100%)
+                      Requires root privileges
+  --run               Run automatic conservation logic (used by systemd)
+                      Requires root privileges
 
-get_battery_level() {
-  cat "$BATTERY_PATH/capacity" 2>/dev/null || echo "0"
-}
-
-apply_conservation() {
-  local desired
-  desired=$(read_config)
-  local current
-  current=$(get_battery_level)
-  local action
-  local val_to_write
-
-  if [[ "$desired" -eq 100 ]]; then
-     # Full charge mode: always disable conservation (0) to allow charging to 100%
-     action="disabled (full charge)"
-     val_to_write=0
-  elif [[ "$current" -ge "$desired" ]]; then
-     # Battery is charged enough, enable conservation (1) to stop charging
-     action="enabled"
-     val_to_write=1
-  else
-     # Battery needs charge, disable conservation (0)
-     action="disabled"
-     val_to_write=0
-  fi
-
-  logger -t auto-battery-conservation "Battery level ${current}% (desired ${desired}%) - conservation ${action}"
+Battery Conservation Mode:
+  When enabled (1), charging stops if battery is 60% or more.
+  When disabled (0), battery charges normally.
   
-  # Write to ACPI path if it exists
-  # We assume we are running as root or via sudo in cron, but let's be safe
-  if compgen -G "$ACPI_PATH" > /dev/null; then
-      echo "$val_to_write" | sudo tee $ACPI_PATH > /dev/null
-  else
-      logger -t auto-battery-conservation "Error: Conservation mode path not found."
-  fi
+  This script automates the process by comparing battery level to a 
+  configured threshold and enabling/disabling conservation mode accordingly.
+
+Examples:
+  auto-battery-conservation --get
+  sudo auto-battery-conservation --set 60
+  sudo auto-battery-conservation --full
+
+EOF
 }
 
-# -----------------------------------------------------------------------------
-# Parse Arguments
-# -----------------------------------------------------------------------------
+# Function to display version
+show_version() {
+    echo "auto-battery-conservation version $VERSION"
+}
 
-# Use getopt to handle flexible arguments
-OPTS=$(getopt -o hgs:f --long help,get,set:,full -n "$(basename "$0")" -- "$@")
-if [ $? != 0 ]; then echo "Failed parsing options." >&2; usage; exit 1; fi
+# Function to read threshold from config
+read_threshold() {
+    if [ -f "$CONFIG_FILE" ]; then
+        cat "$CONFIG_FILE"
+    else
+        echo "$DEFAULT_THRESHOLD"
+    fi
+}
 
-eval set -- "$OPTS"
+# Function to write threshold to config
+write_threshold() {
+    local threshold=$1
+    echo "$threshold" > "$CONFIG_FILE"
+}
 
-while true; do
-  case "$1" in
-    -h | --help )
-      usage
-      exit 0
-      ;;
-    -g | --get )
-      current=$(get_battery_level)
-      conf=$(read_config)
-      echo "Current Battery Level: ${current}%"
-      echo "Configured Threshold:  ${conf}%"
-      exit 0
-      ;;
-    -s | --set )
-      val="$2"
-      if [[ ! "$val" =~ ^[0-9]+$ ]] || (( val < 50 || val > 80 )) && (( val != 100 )); then
-        echo "Error: value must be between 50 and 80, or 100." >&2
+# Function to read battery level
+read_battery_level() {
+    if [ -f "$BATTERY_PATH/capacity" ]; then
+        cat "$BATTERY_PATH/capacity"
+    else
+        echo "ERROR: Battery not found at $BATTERY_PATH" >&2
         exit 1
-      fi
-      write_config "$val"
-      shift 2
-      exit 0
-      ;;
-    -f | --full )
-      write_config "100"
-      shift
-      exit 0
-      ;;
-    -- )
-      shift
-      break
-      ;;
-    * )
-      break
-      ;;
-  esac
-done
+    fi
+}
 
-# If no arguments are passed, run polling logic
-ensure_root
-apply_conservation
+# Function to read conservation mode status
+read_conservation_mode() {
+    if [ -f "$CONSERVATION_PATH" ]; then
+        cat "$CONSERVATION_PATH"
+    else
+        echo "ERROR: Conservation mode path not found at $CONSERVATION_PATH" >&2
+        exit 1
+    fi
+}
+
+# Function to set conservation mode
+set_conservation_mode() {
+    local mode=$1
+    if [ -w "$CONSERVATION_PATH" ]; then
+        echo "$mode" > "$CONSERVATION_PATH"
+    else
+        echo "ERROR: Cannot write to $CONSERVATION_PATH. Root privileges required." >&2
+        exit 1
+    fi
+}
+
+# Function to display current status
+show_status() {
+    local battery_level=$(read_battery_level)
+    local threshold=$(read_threshold)
+    local conservation_mode=$(read_conservation_mode)
+    
+    echo "Battery Level: ${battery_level}%"
+    echo "Conservation Threshold: ${threshold}%"
+    echo "Conservation Mode: $([ "$conservation_mode" -eq 1 ] && echo "Enabled (ON)" || echo "Disabled (OFF)")"
+    
+    if [ "$conservation_mode" -eq 1 ]; then
+        echo "Status: Battery will not charge above 60%"
+    else
+        echo "Status: Battery is charging normally"
+    fi
+}
+
+# Function to set threshold with validation
+set_threshold() {
+    local threshold=$1
+    
+    # Check if root
+    if [ "$EUID" -ne 0 ]; then
+        echo "ERROR: Setting threshold requires root privileges. Use sudo." >&2
+        exit 1
+    fi
+    
+    # Validate threshold
+    if ! [[ "$threshold" =~ ^[0-9]+$ ]]; then
+        echo "ERROR: Threshold must be a number" >&2
+        exit 1
+    fi
+    
+    if [ "$threshold" -lt 50 ] || [ "$threshold" -gt 80 ]; then
+        echo "ERROR: Threshold must be between 50 and 80" >&2
+        exit 1
+    fi
+    
+    write_threshold "$threshold"
+    echo "Conservation threshold set to ${threshold}%"
+    logger -t "$LOG_TAG" "Threshold set to ${threshold}%"
+    
+    # Immediately apply conservation logic with new threshold
+    echo "Applying conservation mode..."
+    run_conservation_logic
+}
+
+# Function to enable full charge
+enable_full_charge() {
+    # Check if root
+    if [ "$EUID" -ne 0 ]; then
+        echo "ERROR: Enabling full charge requires root privileges. Use sudo." >&2
+        exit 1
+    fi
+    
+    # Set threshold to 100 (effectively disables conservation for normal use)
+    write_threshold 100
+    
+    # Immediately disable conservation mode to allow charging
+    set_conservation_mode 0
+    
+    echo "Full charge enabled. Battery will charge to 100%"
+    logger -t "$LOG_TAG" "Full charge enabled (threshold: 100%, conservation: OFF)"
+}
+
+# Main logic function (called by systemd timer)
+run_conservation_logic() {
+    # Check if root
+    if [ "$EUID" -ne 0 ]; then
+        echo "ERROR: Running conservation logic requires root privileges." >&2
+        exit 1
+    fi
+    
+    local battery_level=$(read_battery_level)
+    local threshold=$(read_threshold)
+    local current_mode=$(read_conservation_mode)
+    
+    if [ "$battery_level" -ge "$threshold" ]; then
+        # Battery is at or above threshold, enable conservation
+        if [ "$current_mode" -ne 1 ]; then
+            set_conservation_mode 1
+            logger -t "$LOG_TAG" "Battery at ${battery_level}% (threshold: ${threshold}%). Conservation mode ENABLED."
+        fi
+    else
+        # Battery is below threshold, disable conservation to allow charging
+        if [ "$current_mode" -ne 0 ]; then
+            set_conservation_mode 0
+            logger -t "$LOG_TAG" "Battery at ${battery_level}% (threshold: ${threshold}%). Conservation mode DISABLED."
+        fi
+    fi
+}
+
+# Main script logic
+if [ $# -eq 0 ]; then
+    echo "ERROR: No arguments provided. Use --help for usage information." >&2
+    exit 1
+fi
+
+case "$1" in
+    --help)
+        show_help
+        ;;
+    --version)
+        show_version
+        ;;
+    --get)
+        show_status
+        ;;
+    --set)
+        if [ -z "$2" ]; then
+            echo "ERROR: --set requires a threshold value (50-80)" >&2
+            exit 1
+        fi
+        set_threshold "$2"
+        ;;
+    --full)
+        enable_full_charge
+        ;;
+    --run)
+        run_conservation_logic
+        ;;
+    *)
+        echo "ERROR: Unknown option: $1" >&2
+        echo "Use --help for usage information." >&2
+        exit 1
+        ;;
+esac
