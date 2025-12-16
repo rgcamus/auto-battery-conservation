@@ -1,0 +1,9 @@
+[Unit]
+Description=Auto Battery Conservation Service
+
+[Service]
+Type=oneshot
+ExecStart=/home/camus/ws/lenovo/auto-battery-conservation
+
+[Install]
+WantedBy=multi-user.target

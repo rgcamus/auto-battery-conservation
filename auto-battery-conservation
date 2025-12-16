@@ -1,0 +1,153 @@
+#!/bin/bash
+
+# auto-battery-conservation - Turn battery conservation mode on or off depending
+# on the current battery level.
+#
+# This work is licensed under the Creative Commons Zero v1.0 Universal and
+# therefore belongs to the public domain. For more information, please visit:
+#
+#     https://creativecommons.org/publicdomain/zero/1.0
+
+CONFIG_FILE="/etc/auto-battery-conservation.conf"
+DEFAULT_DESIRED=60
+BATTERY="BAT0"
+BATTERY_PATH="/sys/class/power_supply/$BATTERY"
+ACPI_PATH="/sys/bus/platform/drivers/ideapad_acpi/VPC2004*/conservation_mode"
+
+# Ensure the script has root privileges (prompt for sudo if needed)
+ensure_root() {
+  if [[ $EUID -ne 0 ]]; then
+    echo "Script requires root privileges for this operation. Prompting for sudo..." >&2
+    sudo -v || { echo "Failed to obtain sudo privileges." >&2; exit 1; }
+  fi
+}
+
+usage() {
+  echo "Usage: $(basename "$0") [OPTIONS]"
+  echo
+  echo "Options:"
+  echo "  -h, --help           Show this help message"
+  echo "  -g, --get            Show current battery level and configured threshold"
+  echo "  -s, --set <percent>  Set desired conservation threshold (50-80)"
+  echo "  -f, --full           Force full charge (sets threshold to 100)"
+  echo
+  echo "Without arguments, the script runs in polling mode: it reads the configuration"
+  echo "and enables/disables conservation mode based on current battery level."
+}
+
+read_config() {
+  if [[ -f "$CONFIG_FILE" ]]; then
+    # Helper to check if it's the new format
+    local val
+    val=$(grep "^BATTERY_LEVEL_DESIRED=" "$CONFIG_FILE" | cut -d'=' -f2)
+    if [[ -n "$val" ]]; then
+      echo "$val"
+    else
+      # Fallback for legacy format (just the number)
+      grep -oE '^[0-9]+$' "$CONFIG_FILE" | head -n 1
+    fi
+  else
+    echo "$DEFAULT_DESIRED"
+  fi
+}
+
+write_config() {
+  local val="$1"
+  ensure_root
+  cat <<EOF | sudo tee "$CONFIG_FILE" > /dev/null
+# Battery Conservation Configuration
+# BATTERY_LEVEL_DESIRED defines the charge threshold percentage (50-80).
+# When the battery reaches this level, conservation mode is enabled.
+BATTERY_LEVEL_DESIRED=$val
+EOF
+  echo "Configuration updated: threshold set to ${val}%"
+}
+
+get_battery_level() {
+  cat "$BATTERY_PATH/capacity" 2>/dev/null || echo "0"
+}
+
+apply_conservation() {
+  local desired
+  desired=$(read_config)
+  local current
+  current=$(get_battery_level)
+  local action
+  local val_to_write
+
+  if [[ "$desired" -eq 100 ]]; then
+     # Full charge mode: always disable conservation (0) to allow charging to 100%
+     action="disabled (full charge)"
+     val_to_write=0
+  elif [[ "$current" -ge "$desired" ]]; then
+     # Battery is charged enough, enable conservation (1) to stop charging
+     action="enabled"
+     val_to_write=1
+  else
+     # Battery needs charge, disable conservation (0)
+     action="disabled"
+     val_to_write=0
+  fi
+
+  logger -t auto-battery-conservation "Battery level ${current}% (desired ${desired}%) - conservation ${action}"
+  
+  # Write to ACPI path if it exists
+  # We assume we are running as root or via sudo in cron, but let's be safe
+  if compgen -G "$ACPI_PATH" > /dev/null; then
+      echo "$val_to_write" | sudo tee $ACPI_PATH > /dev/null
+  else
+      logger -t auto-battery-conservation "Error: Conservation mode path not found."
+  fi
+}
+
+# -----------------------------------------------------------------------------
+# Parse Arguments
+# -----------------------------------------------------------------------------
+
+# Use getopt to handle flexible arguments
+OPTS=$(getopt -o hgs:f --long help,get,set:,full -n "$(basename "$0")" -- "$@")
+if [ $? != 0 ]; then echo "Failed parsing options." >&2; usage; exit 1; fi
+
+eval set -- "$OPTS"
+
+while true; do
+  case "$1" in
+    -h | --help )
+      usage
+      exit 0
+      ;;
+    -g | --get )
+      current=$(get_battery_level)
+      conf=$(read_config)
+      echo "Current Battery Level: ${current}%"
+      echo "Configured Threshold:  ${conf}%"
+      exit 0
+      ;;
+    -s | --set )
+      val="$2"
+      if [[ ! "$val" =~ ^[0-9]+$ ]] || (( val < 50 || val > 80 )) && (( val != 100 )); then
+        echo "Error: value must be between 50 and 80, or 100." >&2
+        exit 1
+      fi
+      write_config "$val"
+      shift 2
+      exit 0
+      ;;
+    -f | --full )
+      write_config "100"
+      shift
+      exit 0
+      ;;
+    -- )
+      shift
+      break
+      ;;
+    * )
+      break
+      ;;
+  esac
+done
+
+# If no arguments are passed, run polling logic
+ensure_root
+apply_conservation
