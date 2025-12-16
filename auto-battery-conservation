@@ -37,14 +37,13 @@ usage() {
 
 read_config() {
   if [[ -f "$CONFIG_FILE" ]]; then
-    # Helper to check if it's the new format
-    local val
-    val=$(grep "^BATTERY_LEVEL_DESIRED=" "$CONFIG_FILE" | cut -d'=' -f2)
-    if [[ -n "$val" ]]; then
-      echo "$val"
+    # Load config as environment variables
+    # shellcheck source=/dev/null
+    if source "$CONFIG_FILE"; then
+      echo "${BATTERY_LEVEL_DESIRED:-$DEFAULT_DESIRED}"
     else
-      # Fallback for legacy format (just the number)
-      grep -oE '^[0-9]+$' "$CONFIG_FILE" | head -n 1
+      echo "Error: Failed to load config file $CONFIG_FILE" >&2
+      echo "$DEFAULT_DESIRED"
     fi
   else
     echo "$DEFAULT_DESIRED"

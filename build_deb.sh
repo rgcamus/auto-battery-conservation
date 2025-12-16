@@ -13,13 +13,13 @@ echo "Building $DEB_NAME..."
 # Clean up previous build
 rm -rf "$BUILD_DIR"
 mkdir -p "$PKG_ROOT/DEBIAN"
-mkdir -p "$PKG_ROOT/usr/local/bin"
+mkdir -p "$PKG_ROOT/usr/sbin"
 mkdir -p "$PKG_ROOT/etc/systemd/system"
 
 # Copy files
 echo "Copying files..."
-cp auto-battery-conservation "$PKG_ROOT/usr/local/bin/"
-chmod 755 "$PKG_ROOT/usr/local/bin/auto-battery-conservation"
+cp auto-battery-conservation "$PKG_ROOT/usr/sbin/"
+chmod 755 "$PKG_ROOT/usr/sbin/auto-battery-conservation"
 
 cp auto-battery-conservation.service "$PKG_ROOT/etc/systemd/system/"
 cp auto-battery-conservation.timer "$PKG_ROOT/etc/systemd/system/"
