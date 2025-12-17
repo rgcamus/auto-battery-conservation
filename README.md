@@ -20,11 +20,11 @@ A simple bash script to manage battery conservation mode on Lenovo laptops (spec
 
 ### Using the .deb package (Recommended for Ubuntu 24.04 LTS)
 
-1. Download the `.deb` package (e.g., `auto-battery-conservation_1.0.1_all.deb`).
+1. Download the `.deb` package (e.g., `auto-battery-conservation_1.0.2_all.deb`).
 2. Install it using `apt`:
 
    ```bash
-   sudo apt install ./auto-battery-conservation_1.0.1_all.deb
+   sudo apt install ./auto-battery-conservation_1.0.2_all.deb
    ```
 
    This will automatically:
