@@ -6,7 +6,7 @@
 ![Version](https://img.shields.io/badge/version-1.0.2-blue.svg)
 ![Build Status](https://github.com/rgcamus/auto-battery-conservation/actions/workflows/build-deb.yml/badge.svg)
 
-A simple bash script to manage battery conservation mode on Lenovo laptops (specifically IdeaPad series using the `ideapad_acpi` driver). This tool allows you to set a desired charge threshold (e.g., 60%) to prolong battery life.
+A simple bash script to manage battery conservation mode on Lenovo laptops (specifically IdeaPad and Legion series using the `ideapad_acpi` driver). This tool allows you to set a desired charge threshold (e.g., 60%) to prolong battery life.
 
 ## Features
 
